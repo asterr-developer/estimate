@@ -1,0 +1,13 @@
+.env*
+.git
+vendor
+node_modules
+public/build
+public/hot
+bootstrap/cache/*.php
+database/*.sqlite*
+storage/logs/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/framework/cache/data/*
+preview-screenshots
