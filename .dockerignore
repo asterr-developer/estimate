@@ -11,3 +11,4 @@ storage/framework/sessions/*
 storage/framework/views/*
 storage/framework/cache/data/*
 preview-screenshots
+storage/framework/telegram-demo/

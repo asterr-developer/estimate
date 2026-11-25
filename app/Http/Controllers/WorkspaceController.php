@@ -109,7 +109,9 @@ class WorkspaceController extends Controller
             'clients' => ['name' => 'required|string|max:100', 'details' => 'nullable|string|max:240'],
             'contractors' => ['name' => 'required|string|max:100', 'details' => 'nullable|string|max:240',
                 'contact' => 'nullable|string|max:180'],
-            'services' => ['name' => 'required|string|max:120', 'unit' => 'required|string|max:16', 'price' => ['required', Money::priceRule()]],
+            'services' => ['name' => 'required|string|max:120', 'unit' => 'required|string|max:16', 'price' => ['required', Money::priceRule()],
+                'mini_category' => 'nullable|string|max:60', 'mini_description' => 'nullable|string|max:240',
+                'mini_visible' => 'nullable|boolean'],
             'drafts', 'templates' => [
                 'title' => 'nullable|string|max:120', 'sender' => 'nullable|string|max:100', 'client' => 'nullable|string|max:100',
                 'sender_details' => 'nullable|string|max:240', 'client_details' => 'nullable|string|max:240',

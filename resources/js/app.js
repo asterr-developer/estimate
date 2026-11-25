@@ -7,7 +7,7 @@ import './estimate.css';
 const screen = { render: () => null };
 const router = createRouter({
     history: createWebHistory(),
-    routes: ['/', '/history', '/workspace', '/today', '/p/:token', '/reset-password/:token'].map(path => ({ path, component: screen })),
+    routes: ['/', '/history', '/workspace', '/today', '/telegram-inbox', '/p/:token', '/reset-password/:token'].map(path => ({ path, component: screen })),
 });
 let csrf = document.querySelector('meta[name="csrf-token"]').content;
 const rubles = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -63,6 +63,22 @@ createApp({
         const sessionReady = ref(false);
         const emptyRecords = () => ({ clients: [], services: [], drafts: [], templates: [], contractors: [] });
         const records = ref(emptyRecords());
+        const telegramInbox = ref([]);
+        const telegramReplies = ref({});
+
+        async function loadTelegramInbox(signal) {
+            telegramInbox.value = await api('/telegram/inbox', undefined, signal);
+        }
+
+        function replyTelegram(item) {
+            return send(async () => {
+                const form = telegramReplies.value[item.id] ?? {};
+                await api('/telegram/inbox/' + item.id + '/reply', form);
+                telegramReplies.value[item.id] = { comment: '', proposal_id: '' };
+                await loadTelegramInbox();
+                notice.value = 'Ответ сохранён в обращении.';
+            });
+        }
         const draftId = ref(null);
         const draftVersion = ref(null);
         const accountForm = ref({ name: '', email: '', password: '' });
@@ -195,7 +211,8 @@ createApp({
                 issued.value = null;
                 accountDialog.value.close();
                 await loadWorkspace();
-                if (['/history', '/workspace', '/today'].includes(page.value)) history.value = await api('/proposals');
+                if (['/history', '/workspace', '/today', '/telegram-inbox'].includes(page.value)) history.value = await api('/proposals');
+                if (page.value === '/telegram-inbox') await loadTelegramInbox();
             });
         }
 
@@ -219,6 +236,8 @@ createApp({
                 user.value = null;
                 records.value = emptyRecords();
                 history.value = [];
+                telegramInbox.value = [];
+                telegramReplies.value = {};
                 editing.value = {};
                 activeClient.value = null;
                 draftId.value = null;
@@ -454,8 +473,9 @@ createApp({
                     ]);
                     catalog.value = items;
                     history.value = proposals;
-                } else if (['/history', '/workspace', '/today'].includes(path)) {
+                } else if (['/history', '/workspace', '/today', '/telegram-inbox'].includes(path)) {
                     history.value = await api('/proposals', undefined, controller.signal);
+                    if (path === '/telegram-inbox' && user.value) await loadTelegramInbox(controller.signal);
                 } else if (path.startsWith('/p/')) {
                     shared.value = await api('/proposals/' + encodeURIComponent(route.params.token), undefined, controller.signal);
                 }
@@ -634,6 +654,8 @@ createApp({
             forgot, resetForm, resetPassword, moveStage, openClientCard, addPayment, unitPrice, toCents, importDialog,
             importResult, inspectImport, applyImport, importBase, events, dateTime, selectContractor, archiveView, visibleHistory,
             lineComments, toggleArchive, receiptsDialog, receiptItem, receiptData, receiptInput, openReceipts, saveReceipt,
-            voidReceipt, xlsxUrl: item => '/api/proposals/' + item.token + '/xlsx' };
+            voidReceipt, xlsxUrl: item => '/api/proposals/' + item.token + '/xlsx',
+            telegramInbox, telegramReplies, loadTelegramInbox, replyTelegram,
+            refreshTelegram: () => send(loadTelegramInbox) };
     },
 }).use(router).mount('#app');

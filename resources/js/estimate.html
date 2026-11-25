@@ -9,6 +9,7 @@
             <router-link to="/history">Предложения</router-link>
             <router-link to="/workspace">Кабинет</router-link>
             <router-link to="/today">Сегодня</router-link>
+            <router-link v-if="user" to="/telegram-inbox">Telegram</router-link>
         </nav>
         <div v-if="sessionReady && !page.startsWith('/p/')" class="account-actions">
             <span v-if="user">{{ user.name }}</span>
@@ -205,7 +206,13 @@
                         <label>Реквизиты<input v-model.trim="editing[kind].details" maxlength="240"></label>
                         <label v-if="kind === 'contractors'">Контакты<input v-model.trim="editing[kind].contact" maxlength="180"></label>
                     </template>
-                    <template v-else><label>Единица<input v-model.trim="editing[kind].unit" required maxlength="16"></label><label>Цена, ₽<input v-model.trim="editing[kind].price" inputmode="decimal" maxlength="16" required></label></template>
+                    <template v-else>
+                        <label>Единица<input v-model.trim="editing[kind].unit" required maxlength="16"></label>
+                        <label>Цена, ₽<input v-model.trim="editing[kind].price" inputmode="decimal" maxlength="16" required></label>
+                        <label>Категория в Telegram<input v-model.trim="editing[kind].mini_category" maxlength="60"></label>
+                        <label>Описание в Telegram<input v-model.trim="editing[kind].mini_description" maxlength="240"></label>
+                        <label class="inline-check"><input type="checkbox" :checked="editing[kind].mini_visible !== false && editing[kind].mini_visible !== 0" @change="editing[kind].mini_visible = $event.target.checked"> Показывать в мини-приложении</label>
+                    </template>
                     <div class="editor-actions"><button class="primary" :disabled="pending">Сохранить</button><button type="button" class="secondary" @click="delete editing[kind]">Отмена</button></div>
                 </form>
                 <p v-if="!records[kind].length && !editing[kind]">Справочник пока пуст.</p>
@@ -260,6 +267,32 @@
                     <dl v-else><div v-for="change in changes(item)" :key="change.label"><dt>{{ change.label }}</dt><dd>{{ change.before }} → {{ change.after }}</dd></div></dl>
                 </details>
             </article>
+        </div>
+    </template>
+    <template v-else-if="page === '/telegram-inbox'">
+        <header class="heading"><div><h1>Заявки из Telegram</h1><p>Подбор услуг и переписка с клиентами.</p></div>
+            <div class="editor-actions"><a class="secondary" href="/mini" target="_blank" rel="noopener">Открыть мини-приложение</a><button v-if="user" type="button" class="secondary" :disabled="pending" @click="refreshTelegram">Обновить</button></div>
+        </header>
+        <p v-if="loading">Загружаем обращения…</p>
+        <section v-else-if="!user" class="panel"><button class="primary" @click="accountDialog.showModal()">Войти в кабинет</button></section>
+        <section v-else-if="!telegramInbox.length" class="panel"><p>Новых обращений пока нет.</p></section>
+        <div v-else class="workspace-panels">
+            <details v-for="item in telegramInbox" :key="item.id" class="panel telegram-ticket" @toggle="telegramReplies[item.id] ||= { comment: '', proposal_id: '' }">
+                <summary><strong>{{ item.subject }} № {{ item.id }}</strong><span>{{ item.customer }}</span><span class="badge">{{ item.share_token ? 'Смета отправлена' : 'В работе' }}</span></summary>
+                <p v-if="item.items.length" class="field-hint">{{ item.items.map(row => row.name + ' × ' + row.quantity).join(', ') }}</p>
+                <p v-for="message in item.messages" :key="message.id" class="client-comment"><strong>{{ message.from_operator ? 'Подрядчик' : 'Клиент' }} · {{ dateTime(message.created_at) }}</strong><br>{{ message.body }}</p>
+                <div class="editor-actions">
+                    <button v-if="records.drafts.find(row => row.id === item.draft_id)" type="button" class="secondary" @click="openDraft(records.drafts.find(row => row.id === item.draft_id))">Открыть черновик</button>
+                    <router-link v-if="item.share_token" :to="'/p/' + item.share_token">Открыть отправленную смету</router-link>
+                </div>
+                <form v-if="telegramReplies[item.id]" class="dialog-fields telegram-reply" @submit.prevent="replyTelegram(item)">
+                    <label>Ответ клиенту<textarea v-model.trim="telegramReplies[item.id].comment" maxlength="1500" rows="3"></textarea></label>
+                    <label>Приложить смету<select v-model="telegramReplies[item.id].proposal_id"><option value="">Без сметы</option>
+                        <option v-for="proposal in history.filter(row => !row.archived_at && !['withdrawn', 'expired'].includes(row.status))" :key="proposal.id" :value="proposal.id">{{ proposalNumber(proposal.id) }} · {{ proposal.snapshot.title }} · {{ proposal.snapshot.client }}</option>
+                    </select></label>
+                    <button class="primary" :disabled="pending || (!telegramReplies[item.id].comment && !telegramReplies[item.id].proposal_id)">Ответить клиенту</button>
+                </form>
+            </details>
         </div>
     </template>
     <template v-else-if="page === '/today'">

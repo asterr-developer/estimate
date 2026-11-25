@@ -3,6 +3,7 @@
 .env
 .env.backup
 .env.production
+/.env.telegram-demo
 .phpactor.json
 .phpunit.result.cache
 /.codex
@@ -30,3 +31,4 @@ Thumbs.db
 /preview-screenshots/
 /database/*.sqlite*
 /storage/framework/estimate-capture/
+/storage/framework/telegram-demo/

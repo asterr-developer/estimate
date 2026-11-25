@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ProposalController;
+use App\Http\Controllers\MiniAppController;
 use App\Http\Controllers\ProposalImportController;
 use App\Http\Controllers\WorkspaceController;
 use Illuminate\Support\Facades\Route;
@@ -9,9 +10,20 @@ Route::view('/', 'estimate');
 Route::view('/history', 'estimate');
 Route::view('/workspace', 'estimate');
 Route::view('/today', 'estimate');
+Route::view('/telegram-inbox', 'estimate');
+Route::view('/mini', 'mini');
 Route::view('/reset-password/{token}', 'estimate')->name('password.reset');
 Route::view('/p/{token}', 'estimate')->where('token', '[a-f0-9]{64}');
 Route::post('/api/import-positions', ProposalImportController::class)->middleware('throttle:20,1');
+Route::prefix('api/mini')->controller(MiniAppController::class)->group(function () {
+    Route::get('/', 'home')->middleware('throttle:120,1');
+    Route::post('/requests', 'create')->middleware('throttle:12,1');
+    Route::post('/requests/{thread}/messages', 'followUp')->whereNumber('thread')->middleware('throttle:30,1');
+});
+Route::prefix('api/telegram')->middleware('auth')->controller(MiniAppController::class)->group(function () {
+    Route::get('/inbox', 'inbox');
+    Route::post('/inbox/{thread}/reply', 'reply')->whereNumber('thread');
+});
 
 Route::prefix('api')->controller(ProposalController::class)->group(function () {
     Route::get('/catalog', 'catalog');
