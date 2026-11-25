@@ -34,6 +34,10 @@ php -S 127.0.0.1:8094 -t public
 
 ## Telegram Mini App
 
+[Репозиторий мини-приложения](https://github.com/asterr-developer/estimate-mini) · [Смотреть запись](docs/telegram-mini-app-demo.mp4) · [Скачать MP4](https://raw.githubusercontent.com/asterr-developer/estimate/main/docs/telegram-mini-app-demo.mp4)
+
+На записи показано, как клиент пишет в поддержку из мини-приложения, а подрядчик получает обращение в разделе Telegram и отвечает из кабинета.
+
 Локальная проверка: установите `TELEGRAM_LOCAL_DEMO=true` в `.env`, войдите в кабинет `test` и откройте `/mini`. Заявки и вопросы появятся на вкладке Telegram в кабинете. В .env можно указать `TELEGRAM_OWNER_ID` вместо кабинета `test`.
 
 Для Telegram задайте `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_ID` и публичный HTTPS-адрес `APP_URL`. Выключите локальный режим, настройте URL мини-приложения `/mini` в BotFather и запустите `php artisan queue:work` для отправки уведомлений. Чтобы бот мог писать клиенту, клиент должен сначала открыть диалог и запустить бота либо предоставить разрешение на отправку сообщений. Переписка также доступна в самом мини-приложении.
