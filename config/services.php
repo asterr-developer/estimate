@@ -14,6 +14,18 @@ return [
     |
     */
 
+    'erp_estimates' => [
+        'token' => env('ESTIMATE_ERP_TOKEN'),
+        'owner_id' => env('ESTIMATE_ERP_OWNER_ID'),
+    ],
+
+    'crm_estimates' => [
+        'url' => env('ESTIMATE_CRM_URL'),
+        'source' => env('ESTIMATE_CRM_SOURCE'),
+        'token' => env('ESTIMATE_CRM_TOKEN'),
+        'owner_id' => env('ESTIMATE_CRM_OWNER_ID'),
+    ],
+
     'postmark' => [
         'key' => env('POSTMARK_API_KEY'),
     ],

@@ -164,7 +164,9 @@ class WorkspaceController extends Controller
 
     public function remove(Request $request, string $kind, int $id)
     {
-        abort_unless($this->recordsQuery($request, $kind)->where('id', $id)->delete(), 404);
+        $record = $this->recordsQuery($request, $kind)->where('id', $id);
+        abort_if((clone $record)->whereNotNull('crm_deal_key')->exists(), 409, 'Черновик связан со сделкой CRM.');
+        abort_unless($record->delete(), 404);
 
         return response()->noContent();
     }

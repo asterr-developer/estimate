@@ -7,7 +7,7 @@ import './estimate.css';
 const screen = { render: () => null };
 const router = createRouter({
     history: createWebHistory(),
-    routes: ['/', '/history', '/workspace', '/today', '/telegram-inbox', '/p/:token', '/reset-password/:token'].map(path => ({ path, component: screen })),
+    routes: ['/', '/history', '/workspace', '/today', '/integrations', '/telegram-inbox', '/p/:token', '/reset-password/:token'].map(path => ({ path, component: screen })),
 });
 let csrf = document.querySelector('meta[name="csrf-token"]').content;
 const rubles = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2, minimumFractionDigits: 2 });
@@ -58,6 +58,9 @@ createApp({
         const route = useRoute();
         const navigation = useRouter();
         const page = computed(() => route.path);
+        const crmResults = ref({ deals: [], has_next: false });
+        const crmPage = ref(1);
+        const linkedDraft = computed(() => typeof route.query.draft === 'string' ? route.query.draft : null);
         const catalog = ref([]);
         const user = ref(null);
         const sessionReady = ref(false);
@@ -175,10 +178,35 @@ createApp({
                 lines: lines.map(({ name, quantity, price, unit, stage }) => ({ name, quantity, price, unit, stage })) };
         };
 
+        async function loadCrmDeals(number = 1, signal) {
+            crmResults.value = await api('/workspace/crm-deals?page=' + number, undefined, signal);
+            crmPage.value = number;
+        }
+
+        function openCrmDeal(id) {
+            return send(async () => {
+                const result = await api('/workspace/crm-deals/' + id, {});
+                await loadWorkspace();
+                const item = records.value.drafts.find(row => row.id === result.draft_id);
+                if (!item) throw new Error('Черновик не найден в кабинете.');
+                openDraft(item);
+                if (!draft.value.sender && records.value.contractors[0]) selectContractor(records.value.contractors[0].id);
+            });
+        }
+
         async function loadWorkspace() {
             const kinds = Object.keys(emptyRecords());
             const lists = await Promise.all(kinds.map(kind => api('/workspace/' + kind)));
             records.value = Object.fromEntries(kinds.map((kind, index) => [kind, lists[index]]));
+        }
+
+        function openLinkedDraft() {
+            const id = linkedDraft.value;
+            const item = records.value.drafts.find(row => String(row.id) === id);
+            if (item) {
+                openDraft(item);
+                if (!draft.value.sender && records.value.contractors[0]) selectContractor(records.value.contractors[0].id);
+            }
         }
 
         const session = api('/session').then(result => {
@@ -189,6 +217,7 @@ createApp({
                 return loadWorkspace().then(() => {
                     const profile = records.value.contractors[0];
                     if (profile && !draft.value.sender) selectContractor(profile.id);
+                    openLinkedDraft();
                 });
             }
         }).catch(failure => { error.value = failure.message; }).finally(() => { sessionReady.value = true; });
@@ -211,8 +240,10 @@ createApp({
                 issued.value = null;
                 accountDialog.value.close();
                 await loadWorkspace();
+                openLinkedDraft();
                 if (['/history', '/workspace', '/today', '/telegram-inbox'].includes(page.value)) history.value = await api('/proposals');
                 if (page.value === '/telegram-inbox') await loadTelegramInbox();
+                if (page.value === '/integrations') await loadCrmDeals();
             });
         }
 
@@ -476,6 +507,9 @@ createApp({
                 } else if (['/history', '/workspace', '/today', '/telegram-inbox'].includes(path)) {
                     history.value = await api('/proposals', undefined, controller.signal);
                     if (path === '/telegram-inbox' && user.value) await loadTelegramInbox(controller.signal);
+                } else if (path === '/integrations' && user.value) {
+                    crmResults.value = { deals: [], has_next: false };
+                    await loadCrmDeals(1, controller.signal);
                 } else if (path.startsWith('/p/')) {
                     shared.value = await api('/proposals/' + encodeURIComponent(route.params.token), undefined, controller.signal);
                 }
@@ -500,7 +534,7 @@ createApp({
         }
         function openReview() {
             return send(async () => {
-                const input = payload();
+                const input = { ...payload(), draft_id: draftId.value };
                 const result = await api('/review', input);
                 review.value = { ...result, input };
                 reviewError.value = '';
@@ -644,7 +678,7 @@ createApp({
         const dateTime = value => new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short',
             timeZone: 'Europe/Moscow' }).format(new Date(value.replace(' ', 'T') + 'Z'));
 
-        return { page, catalog, history, shared, issued, clientName, pending, loading, error, draft, preview, shareUrl, copied,
+        return { page, linkedDraft, crmResults, crmPage, openCrmDeal, changeCrmPage: number => send(() => loadCrmDeals(number)), catalog, history, shared, issued, clientName, pending, loading, error, draft, preview, shareUrl, copied,
             shareField, proposalNumber, formatMoney, addLine, issue, accept, copyLink, query, filteredHistory, draftSaved,
             duplicate, newDraft, withdraw, statusFilter, statusLabels, statusNames, counts,
             pdfUrl: item => '/api/proposals/' + item.token + '/pdf', user, sessionReady, records, draftId, accountForm, register,

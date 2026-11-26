@@ -41,8 +41,17 @@ class ProposalController extends Controller
     public function store(Request $request)
     {
         [$data, $owner, $revisionOf, $clientRecordId] = $this->validatedProposal($request);
+        $draftId = $request->validate(['draft_id' => 'nullable|integer|min:1'])['draft_id'] ?? null;
+        $draft = $draftId === null ? null : DB::table('workspace_records')->where('kind', 'drafts')
+            ->where('user_id', $request->user()?->id ?? 0)->find($draftId);
+        abort_if($draftId !== null && !$draft, 404);
+        $previousKey = $revisionOf === null ? null : DB::table('proposals')->where('owner', $owner)
+            ->where('id', $revisionOf)->value('crm_deal_key');
+        abort_if($previousKey !== null && $draft?->crm_deal_key !== null && $previousKey !== $draft->crm_deal_key, 422);
+
         $id = DB::table('proposals')->insertGetId([
             'owner' => $owner,
+            'crm_deal_key' => $previousKey ?? $draft?->crm_deal_key,
             'revision_of' => $revisionOf,
             'client_record_id' => $clientRecordId,
             'share_token' => bin2hex(random_bytes(32)),

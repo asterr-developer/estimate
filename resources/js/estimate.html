@@ -9,6 +9,7 @@
             <router-link to="/history">Предложения</router-link>
             <router-link to="/workspace">Кабинет</router-link>
             <router-link to="/today">Сегодня</router-link>
+            <router-link to="/integrations">Интеграции</router-link>
             <router-link v-if="user" to="/telegram-inbox">Telegram</router-link>
         </nav>
         <div v-if="sessionReady && !page.startsWith('/p/')" class="account-actions">
@@ -21,7 +22,19 @@
 <main class="frame">
     <p v-if="error" role="alert" class="feedback error">{{ error }}</p>
     <p v-if="notice" role="status" class="feedback success">{{ notice }}</p>
-    <template v-if="page === '/'">
+    <section v-if="page === '/' && linkedDraft && (!sessionReady || !draftId)" class="panel">
+        <h1>Черновик сметы</h1>
+        <p v-if="!sessionReady" role="status">Загружаем кабинет…</p>
+        <template v-else-if="!user">
+            <p>Войдите в кабинет сметчика, чтобы открыть черновик из CRM.</p>
+            <button type="button" class="primary" @click="error = ''; accountDialog.showModal()">Войти в кабинет</button>
+        </template>
+        <template v-else>
+            <p role="status">Черновик недоступен в этом кабинете.</p>
+            <router-link to="/workspace">Перейти в кабинет</router-link>
+        </template>
+    </section>
+    <template v-else-if="page === '/'">
         <header class="heading">
             <div><h1>Коммерческое предложение</h1>
             <p v-if="draft.revision_of">Новая версия на основе {{ proposalNumber(draft.revision_of) }}.</p>
@@ -157,6 +170,35 @@
                 </div>
                 <proposal-document :data="preview"></proposal-document>
             </aside>
+        </div>
+    </template>
+    <template v-else-if="page === '/integrations'">
+        <header class="heading"><div><h1>Интеграции</h1><p>Сделки из CRM и выгрузка смет в учётную систему.</p></div></header>
+        <section v-if="!user" class="panel">
+            <p>Войдите в кабинет, чтобы открыть сделки CRM.</p>
+            <button type="button" class="primary" @click="error = ''; accountDialog.showModal()">Войти в кабинет</button>
+        </section>
+        <div v-else class="workspace-panels">
+            <section class="panel" aria-labelledby="crm-heading">
+                <div class="section-title"><h2 id="crm-heading">B2B CRM</h2>
+                    <button type="button" class="secondary" :disabled="loading || pending" @click="changeCrmPage(1)">Обновить</button>
+                </div>
+                <p v-if="loading" role="status">Загружаем сделки…</p>
+                <p v-else-if="!error && !crmResults.deals.length">На этой странице пока нет сделок.</p>
+                <article v-for="deal in crmResults.deals" :key="deal.id" class="record-row">
+                    <div><strong>{{ deal.title }}</strong><small>Сделка №{{ deal.id }} · {{ deal.client }}</small></div>
+                    <button type="button" class="secondary" :disabled="pending" @click="openCrmDeal(deal.id)">Открыть черновик</button>
+                </article>
+                <div v-if="crmPage > 1 || crmResults.has_next" class="actions">
+                    <button type="button" class="secondary" :disabled="pending || crmPage === 1" @click="changeCrmPage(crmPage - 1)">Назад</button>
+                    <button type="button" class="secondary" :disabled="pending || !crmResults.has_next" @click="changeCrmPage(crmPage + 1)">Далее</button>
+                </div>
+            </section>
+            <section class="panel" aria-labelledby="erp-heading">
+                <h2 id="erp-heading">Экспорт в ERP</h2>
+                <p>Принятые сметы, позиции, суммы и НДС.</p>
+                <p><code>GET /api/erp/v1/estimates</code></p>
+            </section>
         </div>
     </template>
     <template v-else-if="page === '/workspace'">

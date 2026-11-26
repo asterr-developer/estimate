@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Route;
 Route::view('/', 'estimate');
 Route::view('/history', 'estimate');
 Route::view('/workspace', 'estimate');
+Route::view('/integrations', 'estimate');
 Route::view('/today', 'estimate');
 Route::view('/telegram-inbox', 'estimate');
 Route::view('/mini', 'mini');
@@ -54,4 +55,9 @@ Route::prefix('api')->controller(WorkspaceController::class)->group(function () 
         Route::post('/workspace/{kind}/{id?}', 'save');
         Route::delete('/workspace/{kind}/{id}', 'remove');
     });
+});
+
+Route::middleware(['auth', 'throttle:30,1'])->group(function () {
+    Route::get('/api/workspace/crm-deals', \App\Http\Controllers\CrmWorkspaceController::class);
+    Route::post('/api/workspace/crm-deals/{deal}', \App\Http\Controllers\CrmWorkspaceController::class)->whereNumber('deal');
 });
