@@ -38,6 +38,78 @@ class ProposalController extends Controller
         return response()->json($rows)->header('Cache-Control', 'private, no-store');
     }
 
+    public function listing(Request $request)
+    {
+        $data = $request->validate([
+            'q' => 'nullable|string|max:150', 'archived' => 'nullable|boolean',
+            'status' => 'nullable|in:all,pending,changes,accepted,expired,withdrawn',
+            'page' => 'nullable|integer|min:1|max:1000000',
+        ]);
+        $base = DB::table('proposals')->where('owner', $this->owner($request));
+        $base = !empty($data['archived']) ? $base->whereNotNull('archived_at') : $base->whereNull('archived_at');
+        $sqlite = DB::connection()->getDriverName() === 'sqlite';
+        $json = fn ($key) => $sqlite ? "json_extract(snapshot, '$.$key')" : "json_unquote(json_extract(snapshot, '$.$key'))";
+        $validUntil = $json('valid_until');
+        $today = today('Europe/Moscow')->toDateString();
+        $status = "CASE WHEN accepted_at IS NOT NULL THEN 'accepted'
+            WHEN withdrawn_at IS NOT NULL THEN 'withdrawn'
+            WHEN $validUntil IS NOT NULL AND $validUntil <> 'null' AND $validUntil < ? THEN 'expired'
+            WHEN revision_requested_at IS NOT NULL THEN 'changes' ELSE 'pending' END";
+        $filter = $data['status'] ?? 'all';
+        if ($filter !== 'all') {
+            $base->whereRaw("($status) = ?", [$today, $filter]);
+        }
+
+        $search = mb_strtolower(trim($data['q'] ?? ''));
+        if ($search !== '') {
+            if ($sqlite) {
+                DB::connection()->getPdo()->sqliteCreateFunction('proposal_lower', fn ($value) => mb_strtolower($value ?? ''), 1);
+            }
+            $lower = $sqlite ? 'proposal_lower' : 'LOWER';
+            $number = $sqlite ? "printf('кп-%04d', id)" : "concat('кп-', lpad(id, greatest(4, length(id)), '0'))";
+            $contains = $sqlite ? 'instr' : 'locate';
+            $base->where(function ($query) use ($search, $json, $lower, $number, $contains, $sqlite) {
+                foreach (["$lower(".$json('title').')', "$lower(".$json('client').')', $number] as $field) {
+                    $args = $sqlite ? "$field, ?" : "?, $field";
+                    $query->orWhereRaw("$contains($args) > 0", [$search]);
+                }
+            });
+        }
+
+        $page = $base->orderByDesc('id')->simplePaginate(25);
+        $paid = DB::table('proposal_receipts')->whereIn('proposal_id', $page->getCollection()->pluck('id'))
+            ->whereNull('voided_at')->select('proposal_id', 'payment_index')
+            ->selectRaw('sum(amount) as paid')->groupBy('proposal_id', 'payment_index')->get()->groupBy('proposal_id');
+
+        $items = $page->getCollection()->map(function ($row) use ($paid) {
+            $item = $this->serialize($row);
+            $summary = $this->paymentSummary($item['snapshot'], $paid->get($row->id, collect())->pluck('paid', 'payment_index')->all());
+
+            return array_intersect_key($item, array_flip(['id', 'token', 'status', 'revision_of', 'revision_requested_at'])) + [
+                'archived_at' => $row->archived_at,
+                'snapshot' => array_intersect_key($item['snapshot'], array_flip(['title', 'client', 'total'])),
+                'payment_summary' => ['paid' => $summary['paid'], 'remaining' => $summary['remaining']],
+            ];
+        });
+
+        return response()->json(['items' => $items, 'has_next' => $page->hasMorePages()])
+            ->header('Cache-Control', 'private, no-store');
+    }
+
+    public function listingDetails(Request $request, string $token)
+    {
+        $row = $this->owned($request, $token);
+        $related = DB::table('proposals')->where('owner', $row->owner);
+        $previous = $row->revision_of ? (clone $related)->find($row->revision_of) : null;
+        $children = $related->where('revision_of', $row->id)->get(['id', 'share_token as token', 'created_at']);
+
+        return response()->json([
+            'item' => $this->serialize($row),
+            'previous' => $previous ? $this->serialize($previous) : null,
+            'children' => $children,
+        ])->header('Cache-Control', 'private, no-store');
+    }
+
     public function store(Request $request)
     {
         [$data, $owner, $revisionOf, $clientRecordId] = $this->validatedProposal($request);
@@ -264,7 +336,7 @@ class ProposalController extends Controller
         $row = $this->owned($request, $token);
         DB::table('proposals')->where('id', $row->id)->update(['archived_at' => $data['archived'] ? ($row->archived_at ?? now()) : null]);
 
-        return $this->index($request);
+        return $request->boolean('compact') ? response()->noContent() : $this->index($request);
     }
 
     public function receipts(Request $request, string $token)

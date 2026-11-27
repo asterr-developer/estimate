@@ -269,19 +269,17 @@
         <header class="heading"><div><h1>{{ archiveView ? 'Архив' : 'Предложения' }}</h1><p>{{ user ? 'Выпущенные документы вашего кабинета.' : 'Документы, созданные в этой сессии.' }}</p></div>
             <button type="button" class="secondary" @click="archiveView = !archiveView; statusFilter = 'all'; query = ''">{{ archiveView ? 'К предложениям' : 'Открыть архив' }}</button>
         </header>
-        <p v-if="loading">Загружаем предложения…</p>
-        <div v-else-if="!history.length && !error" class="panel">Здесь появятся отправленные предложения. <router-link to="/">Открыть редактор</router-link></div>
-        <div v-else-if="history.length" class="panel history">
+        <div class="panel history" :aria-busy="loading">
             <div class="status-filters" role="group" aria-label="Статус предложения">
-                <button type="button" class="secondary" :aria-pressed="statusFilter === 'all'" @click="statusFilter = 'all'">Все <span>{{ visibleHistory.length }}</span></button>
-                <button v-for="(label, key) in statusLabels" :key="key" type="button" class="secondary" :aria-pressed="statusFilter === key" @click="statusFilter = key">{{ label }} <span>{{ counts[key] }}</span></button>
+                <button type="button" class="secondary" :aria-pressed="statusFilter === 'all'" @click="statusFilter = 'all'">Все</button>
+                <button v-for="(label, key) in statusLabels" :key="key" type="button" class="secondary" :aria-pressed="statusFilter === key" @click="statusFilter = key">{{ label }}</button>
             </div>
-            <label class="history-search">Поиск<input v-model="query" type="search" placeholder="Проект, клиент или номер"></label>
-            <p v-if="!visibleHistory.length" class="search-empty">{{ archiveView ? 'Архив пуст.' : 'Все предложения в архиве.' }}</p>
-            <p v-else-if="!filteredHistory.length" class="search-empty">По этому запросу ничего не найдено.</p>
-            <article v-for="item in filteredHistory" :key="item.id" class="history-row">
+            <label class="history-search">Поиск<input v-model="query" type="search" maxlength="150" placeholder="Проект, клиент или номер"></label>
+            <p v-if="loading" role="status">Загружаем предложения…</p>
+            <p v-else-if="!proposalList.items.length" class="search-empty">По этому запросу ничего не найдено.</p>
+            <article v-for="item in proposalList.items" :key="item.id" class="history-row">
                 <div><router-link :to="'/p/' + item.token">{{ item.snapshot.title }}</router-link><small>{{ proposalNumber(item.id) }} · {{ item.snapshot.client }}<template v-if="item.revision_of"> · Версия {{ proposalNumber(item.revision_of) }}</template></small></div>
-                <strong>{{ formatMoney(item.snapshot.total) }}<small v-if="item.payment_summary?.paid">Оплачено {{ formatMoney(item.payment_summary.paid) }}</small></strong>
+                <strong>{{ formatMoney(item.snapshot.total) }}<small v-if="item.payment_summary?.paid">Оплачено {{ formatMoney(item.payment_summary.paid) }}</small><small>Остаток {{ formatMoney(item.payment_summary.remaining) }}</small></strong>
                 <span class="badge" :data-status="item.status">{{ statusNames[item.status] }}</span>
                 <div class="history-actions">
                     <a :href="pdfUrl(item)">PDF</a>
@@ -291,24 +289,29 @@
                     <button v-if="!item.archived_at && ['pending', 'changes'].includes(item.status)" type="button" class="secondary" :disabled="pending" @click="withdraw(item)">Отозвать</button>
                     <button type="button" class="secondary" :disabled="pending" @click="toggleArchive(item)">{{ item.archived_at ? 'Восстановить' : 'В архив' }}</button>
                 </div>
-                <details v-if="item.revision_requested_at" class="version-details"><summary>Запрос правок</summary>
-                    <p v-if="item.revision_comment" class="client-comment">{{ item.revision_comment }}</p>
-                    <ul v-if="item.line_feedback?.length" class="feedback-lines"><li v-for="note in item.line_feedback" :key="note.index"><strong>{{ item.snapshot.lines[note.index].name }}</strong> · {{ note.comment }}</li></ul>
-                </details>
-                <details class="version-details"><summary>Журнал событий</summary>
-                    <ol class="event-list"><li v-for="(event, index) in events(item)" :key="index">
-                        <time>{{ dateTime(event.at) }} МСК</time>
-                        <router-link v-if="event.token" :to="'/p/' + event.token">{{ event.label }}</router-link><strong v-else>{{ event.label }}</strong>
-                        <p v-if="event.note">{{ event.note }}</p>
-                    </li></ol>
-                </details>
-                <details v-if="item.revision_of && versions.has(item.revision_of)" class="version-details">
-                    <summary>Что изменилось относительно {{ proposalNumber(item.revision_of) }}</summary>
-                    <router-link :to="'/p/' + versions.get(item.revision_of).token">Открыть исходную смету</router-link>
-                    <p v-if="!changes(item).length">Условия и суммы совпадают.</p>
-                    <dl v-else><div v-for="change in changes(item)" :key="change.label"><dt>{{ change.label }}</dt><dd>{{ change.before }} → {{ change.after }}</dd></div></dl>
+                <details class="version-details" @toggle="$event.target.open && !proposalDetails[item.id] && loadProposalDetails(item)">
+                    <summary>История и версии</summary>
+                    <template v-if="proposalDetails[item.id]">
+                        <p v-if="proposalDetails[item.id].item.revision_comment" class="client-comment">{{ proposalDetails[item.id].item.revision_comment }}</p>
+                        <ul v-if="proposalDetails[item.id].item.line_feedback.length" class="feedback-lines"><li v-for="note in proposalDetails[item.id].item.line_feedback" :key="note.index"><strong>{{ proposalDetails[item.id].item.snapshot.lines[note.index]?.name }}</strong> · {{ note.comment }}</li></ul>
+                        <ol class="event-list"><li v-for="(event, index) in events(proposalDetails[item.id].item, proposalDetails[item.id].children)" :key="index">
+                            <time>{{ dateTime(event.at) }} МСК</time>
+                            <router-link v-if="event.token" :to="'/p/' + event.token">{{ event.label }}</router-link><strong v-else>{{ event.label }}</strong>
+                            <p v-if="event.note">{{ event.note }}</p>
+                        </li></ol>
+                        <template v-if="proposalDetails[item.id].previous">
+                            <router-link :to="'/p/' + proposalDetails[item.id].previous.token">Открыть исходную смету</router-link>
+                            <p v-if="!changes(proposalDetails[item.id].item, proposalDetails[item.id].previous).length">Условия и суммы совпадают.</p>
+                            <dl v-else><div v-for="change in changes(proposalDetails[item.id].item, proposalDetails[item.id].previous)" :key="change.label"><dt>{{ change.label }}</dt><dd>{{ change.before }} → {{ change.after }}</dd></div></dl>
+                        </template>
+                    </template>
                 </details>
             </article>
+            <nav v-if="proposalPage > 1 || proposalList.has_next" class="history-actions" aria-label="Страницы предложений">
+                <button class="secondary" type="button" :disabled="loading || proposalPage === 1" @click="loadProposalList(proposalPage - 1)">Назад</button>
+                <span>Страница {{ proposalPage }}</span>
+                <button class="secondary" type="button" :disabled="loading || !proposalList.has_next" @click="loadProposalList(proposalPage + 1)">Далее</button>
+            </nav>
         </div>
     </template>
     <template v-else-if="page === '/telegram-inbox'">

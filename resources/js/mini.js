@@ -1,5 +1,5 @@
 import { computed, createApp, ref } from 'vue';
-import template from './mini.html?raw';
+import { render } from './mini.html?vue-template';
 import './mini.css';
 
 const telegram = window.Telegram?.WebApp;
@@ -25,7 +25,7 @@ async function api(path = '', data) {
 }
 
 createApp({
-    template,
+    render,
     setup() {
         const page = ref('catalog'), catalog = ref([]), requests = ref([]), cart = ref({});
         const selected = ref(null), category = ref(''), error = ref(''), pending = ref(false), notice = ref('');

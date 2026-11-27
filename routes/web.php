@@ -29,6 +29,8 @@ Route::prefix('api/telegram')->middleware('auth')->controller(MiniAppController:
 Route::prefix('api')->controller(ProposalController::class)->group(function () {
     Route::get('/catalog', 'catalog');
     Route::get('/proposals', 'index');
+    Route::get('/proposal-list', 'listing');
+    Route::get('/proposal-list/{token}', 'listingDetails')->where('token', '[a-f0-9]{64}');
     Route::post('/proposals', 'store');
     Route::post('/review', 'review');
     Route::get('/proposals/{token}', 'show')->where('token', '[a-f0-9]{64}');

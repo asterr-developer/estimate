@@ -1,7 +1,7 @@
 import { computed, createApp, nextTick, ref, watch } from 'vue';
 import { createRouter, createWebHistory, useRoute, useRouter } from 'vue-router';
-import template from './estimate.html?raw';
-import documentTemplate from './proposal-document.html?raw';
+import { render } from './estimate.html?vue-template';
+import { render as renderProposalDocument } from './proposal-document.html?vue-template';
 import './estimate.css';
 
 const screen = { render: () => null };
@@ -48,12 +48,12 @@ const ProposalDocument = {
             return groups;
         },
     },
-    template: documentTemplate,
+    render: renderProposalDocument,
 };
 
 createApp({
     components: { ProposalDocument },
-    template,
+    render,
     setup() {
         const route = useRoute();
         const navigation = useRouter();
@@ -241,7 +241,8 @@ createApp({
                 accountDialog.value.close();
                 await loadWorkspace();
                 openLinkedDraft();
-                if (['/history', '/workspace', '/today', '/telegram-inbox'].includes(page.value)) history.value = await api('/proposals');
+                if (page.value === '/history') await loadProposalList();
+                if (['/workspace', '/today', '/telegram-inbox'].includes(page.value)) history.value = await api('/proposals');
                 if (page.value === '/telegram-inbox') await loadTelegramInbox();
                 if (page.value === '/integrations') await loadCrmDeals();
             });
@@ -267,6 +268,9 @@ createApp({
                 user.value = null;
                 records.value = emptyRecords();
                 history.value = [];
+                listRequest?.abort();
+                proposalList.value = { items: [], has_next: false };
+                proposalDetails.value = {};
                 telegramInbox.value = [];
                 telegramReplies.value = {};
                 editing.value = {};
@@ -412,20 +416,47 @@ createApp({
         });
         const shareUrl = computed(() => issued.value && new URL('/p/' + issued.value.token, location.origin).href);
         const proposalNumber = id => 'КП-' + String(id).padStart(4, '0');
-        const visibleHistory = computed(() => history.value.filter(item => Boolean(item.archived_at) === archiveView.value));
-        const counts = computed(() => visibleHistory.value.reduce((count, item) => {
-            count[item.status]++;
-            return count;
-        }, { pending: 0, changes: 0, accepted: 0, expired: 0, withdrawn: 0 }));
-        const filteredHistory = computed(() => {
-            const search = query.value.trim().toLocaleLowerCase('ru');
-            return visibleHistory.value.filter(item => (statusFilter.value === 'all' || item.status === statusFilter.value)
-                && [item.snapshot.title, item.snapshot.client, proposalNumber(item.id)]
-                    .some(value => value.toLocaleLowerCase('ru').includes(search)));
+        const proposalList = ref({ items: [], has_next: false });
+        const proposalPage = ref(1);
+        const proposalDetails = ref({});
+        let listRequest;
+        let searchTimer;
+
+        async function loadProposalList(number = 1) {
+            listRequest?.abort();
+            const controller = listRequest = new AbortController();
+            loading.value = true;
+            error.value = '';
+            try {
+                const params = new URLSearchParams({ page: number, archived: Number(archiveView.value), status: statusFilter.value, q: query.value.trim() });
+                const result = await api('/proposal-list?' + params, undefined, controller.signal);
+                if (!controller.signal.aborted) {
+                    if (!result.items.length && number > 1) return loadProposalList(number - 1);
+                    proposalList.value = result;
+                    proposalPage.value = number;
+                }
+            } catch (failure) {
+                if (!controller.signal.aborted) error.value = failure.message;
+            } finally {
+                if (!controller.signal.aborted) loading.value = false;
+            }
+        }
+
+        watch([archiveView, statusFilter, query], () => {
+            clearTimeout(searchTimer);
+            listRequest?.abort();
+            if (page.value === '/history') searchTimer = setTimeout(() => loadProposalList(), 200);
         });
+
+        async function loadProposalDetails(item) {
+            await send(async () => {
+                const details = await api('/proposal-list/' + item.token);
+                if (page.value === '/history') proposalDetails.value[item.id] = details;
+            });
+        }
         const versions = computed(() => new Map(history.value.map(item => [item.id, item])));
-        function changes(item) {
-            const previous = versions.value.get(item.revision_of)?.snapshot;
+        function changes(item, previousItem = versions.value.get(item.revision_of)) {
+            const previous = previousItem?.snapshot;
             if (!previous) return [];
             const current = item.snapshot;
             const descriptions = [];
@@ -461,8 +492,13 @@ createApp({
             return descriptions;
         }
 
-        function duplicate(item) {
+        async function duplicate(item) {
             if (!window.confirm('Заменить текущий черновик копией этого предложения?')) return;
+            if (!item.snapshot.lines) {
+                await loadProposalDetails(item);
+                item = proposalDetails.value[item.id]?.item;
+                if (!item) return;
+            }
             const { subtotal, total, discount_amount, advance, balance, vat_base, vat_amount, valid_until, lines, payments, ...fields } = item.snapshot;
             draft.value = { ...terms, stages: [], ...fields, revision_of: item.id,
                 client_record_id: records.value.clients.some(row => row.id === item.client_record_id) ? item.client_record_id : null,
@@ -488,7 +524,13 @@ createApp({
 
         watch(page, async (path, _, onCleanup) => {
             const controller = new AbortController();
-            onCleanup(() => controller.abort());
+            onCleanup(() => {
+                controller.abort();
+                if (path === '/history') {
+                    listRequest?.abort();
+                    clearTimeout(searchTimer);
+                }
+            });
             shared.value = null;
             clientName.value = '';
             changeComment.value = '';
@@ -504,7 +546,10 @@ createApp({
                     ]);
                     catalog.value = items;
                     history.value = proposals;
-                } else if (['/history', '/workspace', '/today', '/telegram-inbox'].includes(path)) {
+                } else if (path === '/history') {
+                    proposalDetails.value = {};
+                    await loadProposalList();
+                } else if (['/workspace', '/today', '/telegram-inbox'].includes(path)) {
                     history.value = await api('/proposals', undefined, controller.signal);
                     if (path === '/telegram-inbox' && user.value) await loadTelegramInbox(controller.signal);
                 } else if (path === '/integrations' && user.value) {
@@ -572,7 +617,9 @@ createApp({
         }
         function toggleArchive(item) {
             return send(async () => {
-                history.value = await api('/proposals/' + item.token + '/archive', { archived: !item.archived_at });
+                await api('/proposals/' + item.token + '/archive', { archived: !item.archived_at, compact: true });
+                delete proposalDetails.value[item.id];
+                await loadProposalList(proposalPage.value);
                 notice.value = item.archived_at ? 'Смета возвращена из архива.' : 'Смета перемещена в архив.';
             });
         }
@@ -581,6 +628,8 @@ createApp({
             receiptData.value = data;
             const row = history.value.find(item => item.id === receiptItem.value.id);
             if (row) row.payment_summary = data.summary;
+            const listed = proposalList.value.items.find(item => item.id === receiptItem.value.id);
+            if (listed) listed.payment_summary = data.summary;
         }
 
         function openReceipts(item) {
@@ -621,9 +670,13 @@ createApp({
                 try {
                     const changed = await api('/proposals/' + item.token + '/withdraw', {});
                     history.value = history.value.map(row => row.id === changed.id ? { ...row, ...changed } : row);
+                    if (page.value === '/history') {
+                        delete proposalDetails.value[item.id];
+                        await loadProposalList(proposalPage.value);
+                    }
                     if (issued.value?.id === changed.id) issued.value = changed;
                 } catch (failure) {
-                    if (page.value === '/history') history.value = await api('/proposals');
+                    if (page.value === '/history') await loadProposalList(proposalPage.value);
                     throw failure;
                 }
             });
@@ -664,13 +717,13 @@ createApp({
             importResult.value = null;
         }
 
-        function events(item) {
+        function events(item, children = history.value.filter(row => row.revision_of === item.id)) {
             const entries = [{ at: item.created_at, label: 'Смета выпущена' }];
             if (item.revision_of) entries[0].label += ' на основе ' + proposalNumber(item.revision_of);
             if (item.revision_requested_at) entries.push({ at: item.revision_requested_at, label: 'Клиент запросил правки', note: item.revision_comment });
             if (item.accepted_at) entries.push({ at: item.accepted_at, label: 'Клиент сообщил о согласии', note: item.accepted_by });
             if (item.withdrawn_at) entries.push({ at: item.withdrawn_at, label: 'Смета отозвана' });
-            for (const version of history.value.filter(row => row.revision_of === item.id)) {
+            for (const version of children) {
                 entries.push({ at: version.created_at, label: 'Выпущена версия ' + proposalNumber(version.id), token: version.token });
             }
             return entries.sort((a, b) => a.at.localeCompare(b.at));
@@ -679,14 +732,14 @@ createApp({
             timeZone: 'Europe/Moscow' }).format(new Date(value.replace(' ', 'T') + 'Z'));
 
         return { page, linkedDraft, crmResults, crmPage, openCrmDeal, changeCrmPage: number => send(() => loadCrmDeals(number)), catalog, history, shared, issued, clientName, pending, loading, error, draft, preview, shareUrl, copied,
-            shareField, proposalNumber, formatMoney, addLine, issue, accept, copyLink, query, filteredHistory, draftSaved,
-            duplicate, newDraft, withdraw, statusFilter, statusLabels, statusNames, counts,
+            shareField, proposalNumber, formatMoney, addLine, issue, accept, copyLink, query, proposalList, proposalPage, loadProposalList, proposalDetails, loadProposalDetails, draftSaved,
+            duplicate, newDraft, withdraw, statusFilter, statusLabels, statusNames,
             pdfUrl: item => '/api/proposals/' + item.token + '/pdf', user, sessionReady, records, draftId, accountForm, register,
             accountDialog, authenticate, signOut, saveDraft, openDraft, selectClient, saveRecord, removeRecord, editing, notice,
             reviewDialog, review, reviewError, openReview, versions, changes, templateName, templateDialog, saveTemplate, useTemplate,
             activeClient, clientCard, clientProposals, clientDrafts, followUps, changeComment, requestChanges, addStage, removeStage,
             forgot, resetForm, resetPassword, moveStage, openClientCard, addPayment, unitPrice, toCents, importDialog,
-            importResult, inspectImport, applyImport, importBase, events, dateTime, selectContractor, archiveView, visibleHistory,
+            importResult, inspectImport, applyImport, importBase, events, dateTime, selectContractor, archiveView,
             lineComments, toggleArchive, receiptsDialog, receiptItem, receiptData, receiptInput, openReceipts, saveReceipt,
             voidReceipt, xlsxUrl: item => '/api/proposals/' + item.token + '/xlsx',
             telegramInbox, telegramReplies, loadTelegramInbox, replyTelegram,
